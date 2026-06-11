@@ -731,9 +731,10 @@ function togglePsk(btn) {
 }
 
 function clearForm() {
-  ['wan_ip','psk','local_id','remote_id','peer_a','peer_b','primary_ip','secondary_ip','service_ip']
+  ['wan_ip','psk_a','psk_b','local_id_a','local_id_b','remote_id_a','remote_id_b','peer_a','peer_b','primary_ip','secondary_ip','service_ip']
     .forEach(id => document.getElementById(id).value = '');
   configStore = {};
+  document.cookie = 'ipsecgen=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';    
   showEmpty();
 }
 
@@ -1573,6 +1574,22 @@ function subnetMask(cidr) {
   return [(mask >>> 24) & 0xFF, (mask >>> 16) & 0xFF, (mask >>> 8) & 0xFF, mask & 0xFF].join('.');
 }
 
+// -- On Page Load: Populate form from cookie if available ─────────────────────────────
+window.onload = () => {
+  const cookie = document.cookie.split('; ').find(row => row.startsWith('ipsecgen='));
+  if (cookie) {
+    try {
+      const data = JSON.parse(decodeURIComponent(cookie.split('=')[1]));
+      ['wan_ip', 'psk_a', 'psk_b', 'local_id_a', 'local_id_b', 'remote_id_a', 'remote_id_b', 'peer_a', 'peer_b', 'primary_ip', 'secondary_ip', 'service_ip'].forEach(key => {
+        if (data[key]) document.getElementById(key).value = data[key];
+      });
+    } catch (e) {
+      console.error('Failed to parse cookie data:', e);
+    }
+  }
+  generateConfigs();
+};
+
 // ── Main generate ─────────────────────────────────────────────────────────────
 function generateConfigs() {
   const p = {
@@ -1585,10 +1602,32 @@ function generateConfigs() {
     remote_id_b : v('remote_id_b')   || '<REMOTE_IDENTITY_B>',
     peer_a     : v('peer_a')         || '<PEER_A_IP>',
     peer_b     : v('peer_b')         || '<PEER_B_IP>',
-    primary_ip : v('primary_ip')     || '10.0.2.0',
-    secondary_ip: v('secondary_ip')  || '10.0.3.0',
-    service_ip : v('service_ip')     || '10.0.1.0',
+    primary_ip : v('primary_ip')     || '<PRIMARY_IP>',
+    secondary_ip: v('secondary_ip')  || '<SECONDARY_IP>',
+    service_ip : v('service_ip')     || '<SERVICE_IP>',
+
+    // Store configuration as cookie for later re-use
+    save: function() {
+      const data = {
+        wan_ip     : v('wan_ip'),
+        psk_a      : v('psk_a'),
+        psk_b      : v('psk_b'),
+        local_id_a : v('local_id_a'),
+        local_id_b : v('local_id_b'),
+        remote_id_a : v('remote_id_a'),
+        remote_id_b : v('remote_id_b'),
+        peer_a     : v('peer_a'),
+        peer_b     : v('peer_b'),
+        primary_ip : v('primary_ip'),
+        secondary_ip: v('secondary_ip'),
+        service_ip : v('service_ip'),
+      };
+      document.cookie = 'ipsecgen=' + encodeURIComponent(JSON.stringify(data)) + '; max-age=86400; path=/';
+    },
   };
+
+  // Save form data to cookie for future retrieval
+  p.save();
 
   if (!p.psk_a) {
     document.getElementById('psk_a').focus();

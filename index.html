@@ -752,6 +752,63 @@ function switchTab(el) {
   showVendor(vendor);
 }
 
+function identityType(id) {
+  if (!id) return 'fqdn';
+  const ipRegex =
+    /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+  if (ipRegex.test(id)) return 'ip';
+  if (id.includes('@')) return 'email';
+  return 'fqdn';
+}
+
+function ciscoIdentity(id) {
+  switch (identityType(id)) {
+    case 'ip':
+      return `identity local address ${id}`;
+    case 'email':
+      return `identity local email ${id}`;
+    default:
+      return `identity local fqdn ${id}`;
+  }
+}
+
+function paloIdentity(id, direction = 'local-id') {
+  switch (identityType(id)) {
+    case 'ip':
+      return `${direction} type ipaddr id ${id}`;
+    case 'email':
+      return `${direction} type user-fqdn id ${id}`;
+    default:
+      return `${direction} type fqdn id ${id}`;
+  }
+}
+
+function juniperIdentity(id) {
+  switch(identityType(id)) {
+    case 'ip':
+      return `inet ${id}`;
+    case 'email':
+      return `user-at-hostname "${id}"`;
+    default:
+      return `fqdn "${id}"`;
+  }
+}
+
+function mikrotikIdentity(id) {
+  switch(identityType(id)) {
+    case 'ip':
+      return `address:${id}`;
+    case 'email':
+      return `user-fqdn:${id}`;
+    default:
+      return `fqdn:${id}`;
+  }
+}
+
+function cidrHostRoute(ip) {
+  return ip.replace(/\/.*/, '');
+}
+
 function showVendor(vendor) {
   document.querySelectorAll('.vendor-pane').forEach(p => p.classList.remove('active'));
   const pane = document.getElementById('pane-' + vendor);
@@ -838,7 +895,10 @@ crypto ikev2 keyring CLOUD-KEYRING
 ! ── IKEv2 Profiles ──────────────────────────────────────────
 crypto ikev2 profile CLOUD-IKE-PROFILE-A${wan}
  match identity remote address ${p.peer_a} 255.255.255.255
- identity local fqdn ${p.local_id_a}
+ ${identityType(p.remote_id_a) === 'fqdn'
+  ? `match identity remote fqdn ${p.remote_id_a}`
+  : ''}
+ ${ciscoIdentity(p.local_id_a)}
  authentication remote pre-share
  authentication local  pre-share
  keyring local CLOUD-KEYRING
@@ -846,7 +906,7 @@ crypto ikev2 profile CLOUD-IKE-PROFILE-A${wan}
 
 crypto ikev2 profile CLOUD-IKE-PROFILE-B${wan}
  match identity remote address ${p.peer_b} 255.255.255.255
- identity local fqdn ${p.local_id_b}
+ ${ciscoIdentity(p.local_id_b)}
  authentication remote pre-share
  authentication local  pre-share
  keyring local CLOUD-KEYRING
@@ -873,7 +933,8 @@ crypto ipsec profile CLOUD-IPSEC-PROFILE-B
 ! ── Tunnel Interfaces ────────────────────────────────────────
 interface Tunnel10
  description Cloud-VPN-Tunnel-A (Primary)
- ip unnumbered Loopback0
+ ! Configure tunnel addressing or replace with a valid loopback
+ ! ip unnumbered Loopback0
  tunnel source ${p.wan_ip || 'GigabitEthernet1'}
  tunnel mode ipsec ipv4
  tunnel destination ${p.peer_a}
@@ -882,7 +943,8 @@ interface Tunnel10
 
 interface Tunnel11
  description Cloud-VPN-Tunnel-B (Secondary)
- ip unnumbered Loopback0
+ ! Configure tunnel addressing or replace with a valid loopback
+ ! ip unnumbered Loopback0
  tunnel source ${p.wan_ip || 'GigabitEthernet1'}
  tunnel mode ipsec ipv4
  tunnel destination ${p.peer_b}
@@ -891,13 +953,13 @@ interface Tunnel11
 
 ! ── Static Routes ────────────────────────────────────────────
 ! Service subnet — both tunnels (primary preferred via metric)
-ip route ${p.service_ip.replace(/\/.*/, '')} 0.0.0.0 Tunnel10 10
-ip route ${p.service_ip.replace(/\/.*/, '')} 0.0.0.0 Tunnel11 20
+ip route ${cidrHostRoute(p.service_ip)} 255.255.255.255 Tunnel10 10
+ip route ${cidrHostRoute(p.service_ip)} 255.255.255.255 Tunnel11 20
 
 ! Primary-only route via Tunnel A
-ip route ${p.primary_ip.replace(/\/.*/, '')} 0.0.0.0 Tunnel10 10
+ip route ${cidrHostRoute(p.primary_ip)} 255.255.255.255 Tunnel10 10
 ! Secondary-only route via Tunnel B
-ip route ${p.secondary_ip.replace(/\/.*/, '')} 0.0.0.0 Tunnel11 10
+ip route ${cidrHostRoute(p.secondary_ip)} 255.255.255.255 Tunnel11 10
 
 ! ── Dead Peer Detection ──────────────────────────────────────
 crypto ikev2 dpd 10 3 on-demand
@@ -940,8 +1002,8 @@ set network ike gateway CLOUD-GW-A \\
 set network ike gateway CLOUD-GW-A \\
   local-address ip ${p.wan_ip || '<WAN_IP>'} \\
   peer-address ip ${p.peer_a} \\
-  local-id type fqdn id ${p.local_id_a} \\
-  peer-id type fqdn id ${p.remote_id_a}
+  ${paloIdentity(p.local_id_a, 'local-id')} \\
+  ${paloIdentity(p.remote_id_a, 'peer-id')}
 
 # Tunnel B — Secondary Gateway
 set network ike gateway CLOUD-GW-B \\
@@ -958,36 +1020,34 @@ set network ike gateway CLOUD-GW-B \\
 # ── IPsec Tunnels ─────────────────────────────────────────────
 
 # Tunnel A
-set network tunnel ipsec CLOUD-TUNNEL-A \\
+set network interface tunnel units tunnel.10
+set network interface tunnel units tunnel.11
+set network tunnel ipsec CLOUD-TUNNEL-A tunnel-interface tunnel.10 \\
   auto-key ike-gateway CLOUD-GW-A \\
   auto-key ipsec-crypto-profile CLOUD-IPSEC-CRYPTO
-set network tunnel ipsec CLOUD-TUNNEL-A \\
+set network tunnel ipsec CLOUD-TUNNEL-A tunnel-interface tunnel.10 \\
   tunnel-monitor enable yes \\
   tunnel-monitor destination-ip ${p.peer_a} \\
-  tunnel-monitor proxy-id TUN-A
 
 # Tunnel B
-set network tunnel ipsec CLOUD-TUNNEL-B \\
+set network tunnel ipsec CLOUD-TUNNEL-B tunnel-interface tunnel.11 \\
   auto-key ike-gateway CLOUD-GW-B \\
   auto-key ipsec-crypto-profile CLOUD-IPSEC-CRYPTO
-set network tunnel ipsec CLOUD-TUNNEL-B \\
+set network tunnel ipsec CLOUD-TUNNEL-B tunnel-interface tunnel.11 \\
   tunnel-monitor enable yes \\
   tunnel-monitor destination-ip ${p.peer_b} \\
-  tunnel-monitor proxy-id TUN-B
 
 # ── Virtual Router Static Routes ─────────────────────────────
 
 # Service subnet via Tunnel A (primary), Tunnel B (failover)
 set network virtual-router default routing-table ip static-route SVC-VIA-TUN-A \\
   destination ${p.service_ip.replace(/\/.*/, '')}/32 \\
-  nexthop next-vr default \\
-  interface CLOUD-TUNNEL-A \\
+  interface tunnel.10 \\
   metric 10
 
 set network virtual-router default routing-table ip static-route SVC-VIA-TUN-B \\
   destination ${p.service_ip.replace(/\/.*/, '')}/32 \\
-  nexthop next-vr default \\
-  interface CLOUD-TUNNEL-B \\
+  interface tunnel.11 \\
   metric 20
 
 # Primary-only route
@@ -1021,7 +1081,7 @@ function genFortinet(p) {
 
 config vpn ipsec phase1-interface
     edit "CLOUD-TUNNEL-A"
-        set interface "wan1"
+        set interface "${p.wan_interface || 'wan1'}"
         set ike-version 2
         set keylife 28800
         set peertype any
@@ -1037,7 +1097,7 @@ config vpn ipsec phase1-interface
         set dpd-retryinterval 10
     next
     edit "CLOUD-TUNNEL-B"
-        set interface "wan1"
+        set interface "${p.wan_interface || 'wan1'}"
         set ike-version 2
         set keylife 28800
         set peertype any
@@ -1075,19 +1135,19 @@ end
 config system interface
     edit "CLOUD-TUNNEL-A"
         set vdom "root"
-        set ip 169.254.0.1 255.255.255.252
+        set ip <TUNNEL_A_LOCAL> 255.255.255.252
         set allowaccess ping
         set type tunnel
-        set remote-ip 169.254.0.2
-        set interface "wan1"
+        set remote-ip <TUNNEL_A_REMOTE>
+        set interface "${p.wan_interface || 'wan1'}"
     next
     edit "CLOUD-TUNNEL-B"
         set vdom "root"
-        set ip 169.254.0.5 255.255.255.252
+        set ip <TUNNEL_B_LOCAL> 255.255.255.252
         set allowaccess ping
         set type tunnel
-        set remote-ip 169.254.0.6
-        set interface "wan1"
+        set remote-ip <TUNNEL_B_REMOTE>
+        set interface "${p.wan_interface || 'wan1'}"
     next
 end
 
@@ -1199,20 +1259,20 @@ set security ike policy CLOUD-IKE-POLICY-B \\
 set security ike gateway CLOUD-GW-A \\
     ike-policy CLOUD-IKE-POLICY-A \\
     address ${p.peer_a} \\
-    ${p.wan_ip ? 'local-address ' + p.wan_ip : 'local-identity inet'} \\
+    ${p.wan_ip ? 'local-address ' + p.wan_ip : ''} \\
     external-interface ge-0/0/0.0 \\
-    local-identity fqdn "${p.local_id_a}" \\
-    remote-identity fqdn "${p.remote_id_a}" \\
+    local-identity ${juniperIdentity(p.local_id_a)} \\
+    remote-identity ${juniperIdentity(p.remote_id_a)} \\
     version v2-only \\
     dead-peer-detection interval 10 threshold 3
 
 set security ike gateway CLOUD-GW-B \\
     ike-policy CLOUD-IKE-POLICY-B \\
     address ${p.peer_b} \\
-    ${p.wan_ip ? 'local-address ' + p.wan_ip : 'local-identity inet'} \\
+    ${p.wan_ip ? 'local-address ' + p.wan_ip : ''} \\
     external-interface ge-0/0/0.0 \\
-    local-identity fqdn "${p.local_id_b}" \\
-    remote-identity fqdn "${p.remote_id_b}" \\
+    local-identity ${juniperIdentity(p.local_id_b)} \\
+    remote-identity ${juniperIdentity(p.remote_id_b)} \\
     version v2-only \\
     dead-peer-detection interval 10 threshold 3
 
@@ -1244,25 +1304,27 @@ set security ipsec vpn CLOUD-VPN-B \\
 
 set interfaces st0 unit 0 \\
     description "Cloud-Tunnel-A-Primary" \\
-    family inet mtu 1436
+    mtu 1436
+    family inet
 
 set interfaces st0 unit 1 \\
     description "Cloud-Tunnel-B-Secondary" \\
-    family inet mtu 1436
+    mtu 1436
+    family inet
 
 # ── Static Routes ─────────────────────────────────────────────
 
 set routing-options static route ${p.service_ip.replace(/\/.*/, '')}/32 \\
-    next-hop st0.0 metric 10
+    qualified-next-hop st0.0 preference 10
 
 set routing-options static route ${p.service_ip.replace(/\/.*/, '')}/32 \\
-    next-hop st0.1 metric 20
+    qualified-next-hop st0.1 preference 20
 
 set routing-options static route ${p.primary_ip.replace(/\/.*/, '')}/32 \\
-    next-hop st0.0 metric 10
+    qualified-next-hop st0.0 preference 10
 
 set routing-options static route ${p.secondary_ip.replace(/\/.*/, '')}/32 \\
-    next-hop st0.1 metric 10
+    qualified-next-hop st0.1 preference 10
 
 # ── Security Zones ────────────────────────────────────────────
 
@@ -1431,11 +1493,6 @@ SA Lifetime       : 3600 seconds
 #   > List all tunnels
 #   > Verify Cloud-Peer-A and Cloud-Peer-B show "Established"
 
-# ── Database Tool (dbedit) — PSK Override if Needed ──────────
-# modify network_objects Cloud-Peer-A ike_agressive_mode_pre_shared_secret ${p.psk_a}
-# modify network_objects Cloud-Peer-B ike_agressive_mode_pre_shared_secret ${p.psk_b}
-# update_all
-
 # ── Local Gateway: ${p.wan_ip ? 'Source IP ' + p.wan_ip : 'Dynamic IP — enable IP Spoofing or NAT-T'} ──
 
 # ── Route Injection (Gaia OS) ─────────────────────────────────
@@ -1500,22 +1557,22 @@ add name=cloud-peer-b \\
 add peer=cloud-peer-a \\
     auth-method=pre-shared-key \\
     secret="${p.psk_a}" \\
-    my-id=fqdn:${p.local_id_a} \\
-    remote-id=fqdn:${p.remote_id_a}
+    my-id=${mikrotikIdentity(p.local_id_a)}
+    remote-id=${mikrotikIdentity(p.remote_id_a)}
 
 /ip ipsec identity
 add peer=cloud-peer-b \\
     auth-method=pre-shared-key \\
     secret="${p.psk_b}" \\
-    my-id=fqdn:${p.local_id_b} \\
-    remote-id=fqdn:${p.remote_id_b}
+    my-id=${mikrotikIdentity(p.local_id_b)}
+    remote-id=${mikrotikIdentity(p.remote_id_b)}
 
 # ── IPsec Policies ───────────────────────────────────────────
 
 # Service subnet — Tunnel A (primary, lower priority = preferred)
 /ip ipsec policy
 add peer=cloud-peer-a \\
-    src-address=0.0.0.0/0 \\
+    src-address=${p.local_subnet || '0.0.0.0/0'} \\
     dst-address=${p.service_ip.replace(/\/.*/, '')}/32 \\
     proposal=cloud-esp-proposal \\
     tunnel=yes action=encrypt \\
@@ -1524,7 +1581,7 @@ add peer=cloud-peer-a \\
 # Service subnet — Tunnel B (fallback, higher priority number)
 /ip ipsec policy
 add peer=cloud-peer-b \\
-    src-address=0.0.0.0/0 \\
+    src-address=${p.local_subnet || '0.0.0.0/0'} \\
     dst-address=${p.service_ip.replace(/\/.*/, '')}/32 \\
     proposal=cloud-esp-proposal \\
     tunnel=yes action=encrypt \\
@@ -1533,7 +1590,7 @@ add peer=cloud-peer-b \\
 # Primary-only subnet — Tunnel A
 /ip ipsec policy
 add peer=cloud-peer-a \\
-    src-address=0.0.0.0/0 \\
+    src-address=${p.local_subnet || '0.0.0.0/0'} \\
     dst-address=${p.primary_ip.replace(/\/.*/, '')}/32 \\
     proposal=cloud-esp-proposal \\
     tunnel=yes action=encrypt \\
@@ -1542,7 +1599,7 @@ add peer=cloud-peer-a \\
 # Secondary-only subnet — Tunnel B
 /ip ipsec policy
 add peer=cloud-peer-b \\
-    src-address=0.0.0.0/0 \\
+    src-address=${p.local_subnet || '0.0.0.0/0'} \\
     dst-address=${p.secondary_ip.replace(/\/.*/, '')}/32 \\
     proposal=cloud-esp-proposal \\
     tunnel=yes action=encrypt \\

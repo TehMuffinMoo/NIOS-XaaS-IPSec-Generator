@@ -286,6 +286,35 @@
   }
   .vendor-tab.active .vendor-dot { background: var(--accent); }
   .vendor-tab:hover .vendor-dot { background: var(--muted); }
+  .vendor-tab[data-vendor-verified="false"] .vendor-dot { background: #FF7B72; }
+  
+  .vendor-tab[data-vendor-verified="false"]:hover::after {
+    content: 'Configuration Unverified';
+    position: absolute;
+    background: #FF7B72;
+    color: #0D1117;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    top: 36px; /* Adjust based on tab height */
+    white-space: nowrap;
+    opacity: 1;
+    animation: fadeIn 0.2s forwards;
+  }
+
+  .vendor-tab[data-vendor-verified="true"]:hover::after {
+    content: 'Configuration Verified';
+    position: absolute;
+    background: #28A745;
+    color: #0D1117;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    top: 36px; /* Adjust based on tab height */
+    white-space: nowrap;
+    opacity: 1;
+    animation: fadeIn 0.2s forwards;
+  }
 
   .output-content {
     flex: 1;
@@ -558,25 +587,25 @@
   <div class="output-panel">
 
     <div class="vendor-tabs" id="vendorTabs">
-      <div class="vendor-tab active" data-vendor="cisco" onclick="switchTab(this)">
+      <div class="vendor-tab active" data-vendor="cisco" data-vendor-verified="false" onclick="switchTab(this)">
         <div class="vendor-dot"></div>Cisco IOS/IOS-XE
       </div>
-      <div class="vendor-tab" data-vendor="paloalto" onclick="switchTab(this)">
+      <div class="vendor-tab" data-vendor="paloalto" data-vendor-verified="false" onclick="switchTab(this)">
         <div class="vendor-dot"></div>Palo Alto
       </div>
-      <div class="vendor-tab" data-vendor="fortinet" onclick="switchTab(this)">
+      <div class="vendor-tab" data-vendor="fortinet" data-vendor-verified="false" onclick="switchTab(this)">
         <div class="vendor-dot"></div>Fortinet
       </div>
-      <div class="vendor-tab" data-vendor="juniper" onclick="switchTab(this)">
+      <div class="vendor-tab" data-vendor="juniper" data-vendor-verified="false" onclick="switchTab(this)">
         <div class="vendor-dot"></div>Juniper SRX
       </div>
-      <div class="vendor-tab" data-vendor="cato" onclick="switchTab(this)">
+      <div class="vendor-tab" data-vendor="cato" data-vendor-verified="false" onclick="switchTab(this)">
         <div class="vendor-dot"></div>Cato Networks
       </div>
-      <div class="vendor-tab" data-vendor="checkpoint" onclick="switchTab(this)">
+      <div class="vendor-tab" data-vendor="checkpoint" data-vendor-verified="false" onclick="switchTab(this)">
         <div class="vendor-dot"></div>Check Point
       </div>
-      <div class="vendor-tab" data-vendor="mikrotik" onclick="switchTab(this)">
+      <div class="vendor-tab" data-vendor="mikrotik" data-vendor-verified="false" onclick="switchTab(this)">
         <div class="vendor-dot"></div>MikroTik
       </div>
     </div>

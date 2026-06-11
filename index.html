@@ -764,11 +764,11 @@ function identityType(id) {
 function ciscoIdentity(id) {
   switch (identityType(id)) {
     case 'ip':
-      return `identity local address ${id}`;
+      return `address ${id}`;
     case 'email':
-      return `identity local email ${id}`;
+      return `email ${id}`;
     default:
-      return `identity local fqdn ${id}`;
+      return `fqdn ${id}`;
   }
 }
 
@@ -789,8 +789,10 @@ function juniperIdentity(id) {
       return `inet ${id}`;
     case 'email':
       return `user-at-hostname "${id}"`;
+    case 'fqdn':
+      return `hostname "${id}"`;
     default:
-      return `fqdn "${id}"`;
+      return `key-id "${id}"`;
   }
 }
 
@@ -894,19 +896,16 @@ crypto ikev2 keyring CLOUD-KEYRING
 
 ! ── IKEv2 Profiles ──────────────────────────────────────────
 crypto ikev2 profile CLOUD-IKE-PROFILE-A${wan}
- match identity remote address ${p.peer_a} 255.255.255.255
- ${identityType(p.remote_id_a) === 'fqdn'
-  ? `match identity remote fqdn ${p.remote_id_a}`
-  : ''}
- ${ciscoIdentity(p.local_id_a)}
+ match identity remote ${ciscoIdentity(p.remote_id_a)}
+ identity local ${ciscoIdentity(p.local_id_a)}
  authentication remote pre-share
  authentication local  pre-share
  keyring local CLOUD-KEYRING
 !
 
 crypto ikev2 profile CLOUD-IKE-PROFILE-B${wan}
- match identity remote address ${p.peer_b} 255.255.255.255
- ${ciscoIdentity(p.local_id_b)}
+ match identity remote ${ciscoIdentity(p.remote_id_b)}
+ identity local ${ciscoIdentity(p.local_id_b)}
  authentication remote pre-share
  authentication local  pre-share
  keyring local CLOUD-KEYRING
@@ -1027,7 +1026,7 @@ set network tunnel ipsec CLOUD-TUNNEL-A tunnel-interface tunnel.10 \\
   auto-key ipsec-crypto-profile CLOUD-IPSEC-CRYPTO
 set network tunnel ipsec CLOUD-TUNNEL-A tunnel-interface tunnel.10 \\
   tunnel-monitor enable yes \\
-  tunnel-monitor destination-ip ${p.peer_a} \\
+  tunnel-monitor destination-ip ${p.primary_ip} \\
 
 # Tunnel B
 set network tunnel ipsec CLOUD-TUNNEL-B tunnel-interface tunnel.11 \\
@@ -1035,7 +1034,7 @@ set network tunnel ipsec CLOUD-TUNNEL-B tunnel-interface tunnel.11 \\
   auto-key ipsec-crypto-profile CLOUD-IPSEC-CRYPTO
 set network tunnel ipsec CLOUD-TUNNEL-B tunnel-interface tunnel.11 \\
   tunnel-monitor enable yes \\
-  tunnel-monitor destination-ip ${p.peer_b} \\
+  tunnel-monitor destination-ip ${p.secondary_ip} \\
 
 # ── Virtual Router Static Routes ─────────────────────────────
 
@@ -1053,13 +1052,13 @@ set network virtual-router default routing-table ip static-route SVC-VIA-TUN-B \
 # Primary-only route
 set network virtual-router default routing-table ip static-route PRIMARY-ONLY \\
   destination ${p.primary_ip.replace(/\/.*/, '')}/32 \\
-  interface CLOUD-TUNNEL-A \\
+  interface tunnel.10 \\
   metric 10
 
 # Secondary-only route
 set network virtual-router default routing-table ip static-route SECONDARY-ONLY \\
   destination ${p.secondary_ip.replace(/\/.*/, '')}/32 \\
-  interface CLOUD-TUNNEL-B \\
+  interface tunnel.11 \\
   metric 10
 
 # ── Proxy IDs (if required) ───────────────────────────────────
@@ -1302,29 +1301,27 @@ set security ipsec vpn CLOUD-VPN-B \\
 
 # ── Tunnel Interfaces ─────────────────────────────────────────
 
-set interfaces st0 unit 0 \\
-    description "Cloud-Tunnel-A-Primary" \\
-    mtu 1436
-    family inet
+set interfaces st0 unit 0 description "Cloud-Tunnel-A-Primary"
+set interfaces st0 unit 0 mtu 1436
+set interfaces st0 unit 0 family inet
 
-set interfaces st0 unit 1 \\
-    description "Cloud-Tunnel-B-Secondary" \\
-    mtu 1436
-    family inet
+set interfaces st0 unit 1 description "Cloud-Tunnel-B-Secondary"
+set interfaces st0 unit 1 mtu 1436
+set interfaces st0 unit 1 family inet
 
 # ── Static Routes ─────────────────────────────────────────────
 
 set routing-options static route ${p.service_ip.replace(/\/.*/, '')}/32 \\
-    qualified-next-hop st0.0 preference 10
+    next-hop st0.0 preference 10
 
 set routing-options static route ${p.service_ip.replace(/\/.*/, '')}/32 \\
-    qualified-next-hop st0.1 preference 20
+    next-hop st0.1 preference 20
 
 set routing-options static route ${p.primary_ip.replace(/\/.*/, '')}/32 \\
-    qualified-next-hop st0.0 preference 10
+    next-hop st0.0 preference 10
 
 set routing-options static route ${p.secondary_ip.replace(/\/.*/, '')}/32 \\
-    qualified-next-hop st0.1 preference 10
+    next-hop st0.1 preference 10
 
 # ── Security Zones ────────────────────────────────────────────
 
